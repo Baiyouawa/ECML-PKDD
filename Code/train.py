@@ -6,7 +6,7 @@ import numpy as np
 import torch
 
 import timesnet_train
-import A_train
+import fgti_train
 
 
 DATA_DEFAULTS = {
@@ -17,7 +17,7 @@ DATA_DEFAULTS = {
 
 MODEL_REGISTRY = {
     "timesnet": (timesnet_train.diffusion_train, timesnet_train.diffusion_test),
-    "fgti": (A_train.diffusion_train, A_train.diffusion_test),
+    "fgti": (fgti_train.diffusion_train, fgti_train.diffusion_test),
 }
 
 
@@ -50,6 +50,7 @@ class Config:
     num_class: int = 0
     data_root: str = str(Path(__file__).resolve().parents[1] / "Datasets" / "data")
     results_root: str = str(Path(__file__).resolve().parents[1] / "Results")
+    train_ratio: float = 0.8
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -81,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--num_class", type=int, default=Config.num_class)
     p.add_argument("--data_root", type=str, default=Config.data_root)
     p.add_argument("--results_root", type=str, default=Config.results_root)
+    p.add_argument("--train_ratio", type=float, default=Config.train_ratio, help="split ratio for train set")
     return p
 
 

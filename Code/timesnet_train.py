@@ -75,7 +75,7 @@ def diffusion_test(configs, model):
         observed_dataf = observed_dataf_cpu.to(configs.device)
 
         # --- 核心 ---
-        x_enc = observed_dataf
+        x_enc = observed_data * observed_mask
         with torch.no_grad():
             imputed_output = model(x_enc, None, None, None, mask=observed_mask)
         eval_mask = gt_mask - observed_mask

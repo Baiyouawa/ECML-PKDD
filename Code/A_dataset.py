@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Tuple
 from torch.utils.data import DataLoader
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, random_split
 import numpy as np
 import torch
 import torchcde
@@ -19,6 +19,8 @@ def _resolve_paths(configs, data_name: str, mask_name: str) -> Tuple[Path, Path]
 
 def _load_data_and_mask(data_path: Path, mask_path: Path, seq_len: int, enc_in: int, missing_rate: float, seed: int):
     data = np.loadtxt(data_path, delimiter=",")
+    if data.size == 0:
+        raise ValueError(f"Data file is empty: {data_path}")
     total_len = (data.shape[0] // seq_len) * seq_len
     data = data[:total_len].reshape(-1, seq_len, enc_in)
 
@@ -27,9 +29,15 @@ def _load_data_and_mask(data_path: Path, mask_path: Path, seq_len: int, enc_in: 
         mask[(data == -200) | np.isnan(data)] = 0
     else:
         if mask_path.suffix == ".npy":
-            mask = np.load(mask_path)
+            try:
+                mask = np.load(mask_path)
+            except Exception:
+                # 兼容意外命名为 .npy 但实际是文本的情况
+                mask = np.loadtxt(mask_path, delimiter=",")
         else:
             mask = np.loadtxt(mask_path, delimiter=",")
+        if mask.size == 0:
+            raise ValueError(f"Mask file is empty: {mask_path}")
         mask = mask[:total_len].reshape(-1, seq_len, enc_in)
     return data, mask
 
@@ -37,6 +45,9 @@ def _load_data_and_mask(data_path: Path, mask_path: Path, seq_len: int, enc_in: 
 def _prep_tensors(data: np.ndarray, mask: np.ndarray, configs):
     mask_gt = np.ones_like(data)
     mask_gt[(data == -200) | np.isnan(data)] = 0
+
+    # 保证模拟掩码不把原始缺失当作可见：与 mask_gt 交叉
+    mask = np.where(mask_gt == 1, mask, 0)
 
     data = np.where((data == -200) | np.isnan(data), 0.0, data)
 
@@ -157,20 +168,32 @@ class PHYSIO_DATASET(Dataset):
 
 def get_physio_dataset(configs):
     dataset = PHYSIO_DATASET(configs)
-    train_loader = DataLoader(dataset, batch_size=configs.batch, num_workers=0, shuffle=True)
-    test_loader = DataLoader(dataset, batch_size=configs.batch, num_workers=0, shuffle=False)
+    train_size = int(len(dataset) * getattr(configs, "train_ratio", 0.8))
+    val_size = len(dataset) - train_size
+    g = torch.Generator().manual_seed(configs.seed)
+    train_ds, test_ds = random_split(dataset, [train_size, val_size], generator=g)
+    train_loader = DataLoader(train_ds, batch_size=configs.batch, num_workers=0, shuffle=True)
+    test_loader = DataLoader(test_ds, batch_size=configs.batch, num_workers=0, shuffle=False)
     return train_loader, test_loader
 
 def get_kdd_dataset(configs):
     dataset = KDD_DATASET(configs)
-    train_loader = DataLoader(dataset, batch_size=configs.batch, num_workers=0, shuffle=True)
-    test_loader = DataLoader(dataset, batch_size=configs.batch, num_workers=0, shuffle=False)
+    train_size = int(len(dataset) * getattr(configs, "train_ratio", 0.8))
+    val_size = len(dataset) - train_size
+    g = torch.Generator().manual_seed(configs.seed)
+    train_ds, test_ds = random_split(dataset, [train_size, val_size], generator=g)
+    train_loader = DataLoader(train_ds, batch_size=configs.batch, num_workers=0, shuffle=True)
+    test_loader = DataLoader(test_ds, batch_size=configs.batch, num_workers=0, shuffle=False)
     return train_loader, test_loader
 
 def get_guangzhou_dataset(configs):
     dataset = GUANGZHOU_DATASET(configs)
-    train_loader = DataLoader(dataset, batch_size=configs.batch, num_workers=0, shuffle=True)
-    test_loader = DataLoader(dataset, batch_size=configs.batch, num_workers=0, shuffle=False)
+    train_size = int(len(dataset) * getattr(configs, "train_ratio", 0.8))
+    val_size = len(dataset) - train_size
+    g = torch.Generator().manual_seed(configs.seed)
+    train_ds, test_ds = random_split(dataset, [train_size, val_size], generator=g)
+    train_loader = DataLoader(train_ds, batch_size=configs.batch, num_workers=0, shuffle=True)
+    test_loader = DataLoader(test_ds, batch_size=configs.batch, num_workers=0, shuffle=False)
     return train_loader, test_loader
 
 
