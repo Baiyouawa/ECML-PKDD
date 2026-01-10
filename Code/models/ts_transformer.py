@@ -156,7 +156,7 @@ class TSTransformerEncoder(nn.Module):
         self.d_model = configs.d_model
         self.n_heads = configs.nheads
 
-        self.project_inp = nn.Linear(configs.enc_in * 2, self.d_model)
+        self.project_inp = nn.Linear(configs.enc_in, self.d_model)
         self.pos_enc = get_pos_encoder(pos_encoding)(self.d_model, dropout=dropout*(1.0 - freeze), max_len=self.max_len)
 
         encoder_layer = TransformerBatchNormEncoderLayer(self.d_model, self.n_heads, dim_feedforward, dropout*(1.0 - freeze), activation=activation)

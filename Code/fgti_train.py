@@ -2,6 +2,7 @@
 from pathlib import Path
 
 from models import main_model
+import metrics_utils
 import A_dataset
 from torch import optim
 import time
@@ -120,6 +121,11 @@ def diffusion_test(configs, model):
     target_2d = torch.cat(target_2d, dim=0)
     forecast_2d = torch.cat(forecast_2d, dim=0)
     eval_p_2d = torch.cat(eval_p_2d, dim=0)
+    mean, std = metrics_utils.load_mean_std(
+        dataset=configs.dataset,
+        data_root=getattr(configs, "data_root", Path(__file__).resolve().parents[1] / "Datasets" / "data"),
+        device=target_2d.device,
+    )
     all_target = torch.cat(all_target, dim=0)
     all_evalpoint = torch.cat(all_evalpoint, dim=0)
     all_observed_point = torch.cat(all_observed_point, dim=0)
@@ -129,9 +135,17 @@ def diffusion_test(configs, model):
 
     RMSE = calc_RMSE(target_2d, forecast_2d, eval_p_2d)
     MAE = calc_MAE(target_2d, forecast_2d, eval_p_2d)
+    MAPE = calc_MAPE(target_2d, forecast_2d, eval_p_2d, mean, std)
+    WASS = calc_Wasserstein(target_2d, forecast_2d, eval_p_2d)
+    WASS_PER_DIM = calc_Wasserstein_per_dim(target_2d, forecast_2d, eval_p_2d)
+    WASS_TAIL = calc_Wasserstein_tail(target_2d, forecast_2d, eval_p_2d, q=0.9)
 
     print("RMSE: ", RMSE)
     print("MAE: ", MAE)
+    print("MAPE: ", MAPE)
+    print("Wasserstein: ", WASS)
+    print("Wasserstein_per_dim: ", WASS_PER_DIM)
+    print("Wasserstein_tail_q90: ", WASS_TAIL)
 
 def calc_RMSE(target, forecast, eval_points):
     eval_p = torch.where(eval_points == 1)
@@ -142,3 +156,71 @@ def calc_MAE(target, forecast, eval_points):
     eval_p = torch.where(eval_points == 1)
     error_mean = torch.mean(torch.abs(target[eval_p] - forecast[eval_p]))
     return error_mean
+
+
+def calc_MAPE(target, forecast, eval_points, mean, std, eps: float = 1e-6):
+    eval_p = torch.where(eval_points == 1)
+    target_denorm = target * std + mean
+    forecast_denorm = forecast * std + mean
+    denom = torch.clamp(torch.abs(target_denorm), min=eps)
+    return torch.mean(torch.abs((target_denorm - forecast_denorm) / denom))
+
+
+def calc_Wasserstein(target, forecast, eval_points):
+    eval_p = torch.where(eval_points == 1)
+    if eval_p[0].numel() == 0:
+        return torch.tensor(float("nan"), device=target.device)
+    t = target[eval_p].reshape(-1)
+    f = forecast[eval_p].reshape(-1)
+    t_sorted, _ = torch.sort(t)
+    f_sorted, _ = torch.sort(f)
+    m = min(t_sorted.shape[0], f_sorted.shape[0])
+    return torch.mean(torch.abs(t_sorted[:m] - f_sorted[:m]))
+
+
+def _wasserstein_1d(t: torch.Tensor, f: torch.Tensor):
+    t_sorted, _ = torch.sort(t)
+    f_sorted, _ = torch.sort(f)
+    m = min(t_sorted.shape[0], f_sorted.shape[0])
+    return torch.mean(torch.abs(t_sorted[:m] - f_sorted[:m]))
+
+
+def calc_Wasserstein_per_dim(target, forecast, eval_points):
+    B, L, K = target.shape
+    ws = []
+    for k in range(K):
+        mask_k = eval_points[:, :, k] == 1
+        if mask_k.sum() == 0:
+            continue
+        t = target[:, :, k][mask_k]
+        f = forecast[:, :, k][mask_k]
+        ws.append(_wasserstein_1d(t, f))
+    if len(ws) == 0:
+        return torch.tensor(float("nan"), device=target.device)
+    return torch.mean(torch.stack(ws))
+
+
+def calc_Wasserstein_tail(target, forecast, eval_points, q: float = 0.9):
+    # 两侧尾部：同时考虑低分位与高分位
+    B, L, K = target.shape
+    ws_tail = []
+    q_low = 1 - q
+    for k in range(K):
+        mask_k = eval_points[:, :, k] == 1
+        if mask_k.sum() < 2:
+            continue
+        t_full = target[:, :, k][mask_k]
+        f_full = forecast[:, :, k][mask_k]
+        if t_full.numel() < 2:
+            continue
+        thr_low = torch.quantile(t_full, q_low)
+        thr_high = torch.quantile(t_full, q)
+        tail_mask = (t_full <= thr_low) | (t_full >= thr_high)
+        if tail_mask.sum() == 0:
+            continue
+        t_tail = t_full[tail_mask]
+        f_tail = f_full[tail_mask]
+        ws_tail.append(_wasserstein_1d(t_tail, f_tail))
+    if len(ws_tail) == 0:
+        return torch.tensor(float("nan"), device=target.device)
+    return torch.mean(torch.stack(ws_tail))
